@@ -224,8 +224,15 @@ function define_grouped_permission_checkboxes(id_prefix, which_groups = null) {
     }
     // For each permissions group, create a row:
     for(let g of which_groups){
-        let row = $(`<tr id="${id_prefix}_row_${g}">
-            <td id="${id_prefix}_${g}_name">${g}</td>
+        // Full_control and Special_permissions should not be expandable
+        let is_expandable = (g !== 'Special_permissions' && g !== 'Full_control' && g in permission_groups)
+        
+        // Create the main group row with expand/collapse icon
+        let row = $(`<tr id="${id_prefix}_row_${g}" class="group_row">
+            <td id="${id_prefix}_${g}_name" style="cursor:${is_expandable ? 'pointer' : 'default'};">
+                ${is_expandable ? '<span id="' + id_prefix + '_' + g + '_expand_icon" class="oi oi-chevron-right" style="font-size:0.9em;margin-right:4px;"></span>' : ''}
+                ${g}
+            </td>
         </tr>`)
         for(let ace_type of ['allow', 'deny']) {
             row.append(`<td id="${id_prefix}_${g}_${ace_type}_cell">
@@ -233,10 +240,49 @@ function define_grouped_permission_checkboxes(id_prefix, which_groups = null) {
             </td>`)
         }
         group_table.append(row)
+        
+        // Add sub-rows for individual permissions in this group (if expandable and not Full_control)
+        if(is_expandable) {
+            for(let perm of permission_groups[g]) {
+                let p_id = perm.replace(/[ \/]/g, '_')
+                let sub_row = $(`<tr id="${id_prefix}_row_${g}_${p_id}" class="sub_perm_row" group="${g}" style="display:none;background-color:#f5f5f5;">
+                    <td id="${id_prefix}_${g}_${p_id}_name" style="padding-left:30px;font-size:0.9em;">${perm}</td>
+                </tr>`)
+                for(let ace_type of ['allow', 'deny']) {
+                    sub_row.append(`<td id="${id_prefix}_${g}_${p_id}_${ace_type}_cell">
+                        <input type="checkbox" id="${id_prefix}_${g}_${p_id}_${ace_type}_checkbox" ptype="${ace_type}" class="perm_checkbox" permission="${perm}" ></input>
+                    </td>`)
+                }
+                group_table.append(sub_row)
+            }
+        }
     }  
 
+    // Add click handler for expand/collapse functionality
+    group_table.find('.group_row').each(function() {
+        let row = $(this)
+        let group_name = row.attr('id').replace(`${id_prefix}_row_`, '')
+        let icon = row.find('.oi')
+        
+        // Only add click handler if there's an icon (i.e., it's expandable)
+        if(icon.length > 0) {
+            row.find('td:first').click(function() {
+                // Toggle sub-rows visibility
+                let sub_rows = group_table.find(`.sub_perm_row[group="${group_name}"]`)
+                sub_rows.toggle()
+                
+                // Toggle icon between chevron-right (collapsed) and chevron-bottom (expanded)
+                if(icon.hasClass('oi-chevron-right')) {
+                    icon.removeClass('oi-chevron-right').addClass('oi-chevron-bottom')
+                } else {
+                    icon.removeClass('oi-chevron-bottom').addClass('oi-chevron-right')
+                }
+            })
+        }
+    })
 
     group_table.find('.groupcheckbox').prop('disabled', true)// disable all checkboxes to start
+    group_table.find('.perm_checkbox').prop('disabled', true)// disable all specific permission checkboxes to start
 
     // Update checkboxes when either user or file changes:
     let update_group_checkboxes = function(){
@@ -252,29 +298,87 @@ function define_grouped_permission_checkboxes(id_prefix, which_groups = null) {
             group_table.find('.groupcheckbox').prop('disabled', false)
             group_table.find('.groupcheckbox').prop('checked', false)
             group_table.find('.groupcheckbox[group="Special_permissions"]').prop('disabled', true) // special_permissions is always disabled
+            
+            // clear specific permission checkbox states:
+            group_table.find('.perm_checkbox').prop('disabled', false)
+            group_table.find('.perm_checkbox').prop('checked', false)
 
             // change name on table:
             $(`#${id_prefix}_header_username`).text(username)
 
             // get new grouped permissions:
             let grouped_perms = get_grouped_permissions(path_to_file[filepath], username)
+            
+            // Get individual permissions to check for partial states
+            let all_perms = get_total_permissions(path_to_file[filepath], username)
 
             for( ace_type in grouped_perms) { // 'allow' and 'deny'
                 for(allowed_group in grouped_perms[ace_type]) {
                     let checkbox = group_table.find(`#${id_prefix}_${allowed_group}_${ace_type}_checkbox`)
                     checkbox.prop('checked', true)
+                    checkbox.prop('indeterminate', false) // Reset indeterminate state
                     if(grouped_perms[ace_type][allowed_group].inherited) {
                         // can't uncheck inherited permissions.
                         checkbox.prop('disabled', true)
                     }
-
                 }
-            } 
+            }
+            
+            // Check for partial/indeterminate states (when some but not all permissions in a group are checked)
+            for(let g of which_groups) {
+                if(g !== 'Special_permissions' && g !== 'Full_control' && g in permission_groups) {
+                    for(let ace_type of ['allow', 'deny']) {
+                        let group_perms = permission_groups[g]
+                        let checked_count = 0
+                        let total_count = group_perms.length
+                        
+                        // Count how many permissions in this group are checked
+                        for(let perm of group_perms) {
+                            if(all_perms[ace_type] && all_perms[ace_type][perm]) {
+                                checked_count++
+                            }
+                        }
+                        
+                        let checkbox = group_table.find(`#${id_prefix}_${g}_${ace_type}_checkbox`)
+                        
+                        // If some (but not all) permissions are checked, show indeterminate state
+                        if(checked_count > 0 && checked_count < total_count) {
+                            checkbox.prop('checked', false)
+                            checkbox.prop('indeterminate', true)
+                        } else if(checked_count === 0) {
+                            checkbox.prop('checked', false)
+                            checkbox.prop('indeterminate', false)
+                        }
+                        // If all are checked, it's already set above in grouped_perms loop
+                    }
+                }
+            }
+            
+            // Update individual permission checkboxes
+            // Note: Some permissions appear in multiple groups (e.g., "list folder/read contents" 
+            // appears in both Read and Read_Execute). When a permission is set, we check ALL 
+            // instances of that permission checkbox across all groups.
+            // (we already have all_perms from above, no need to call get_total_permissions again)
+            for( ace_type in all_perms) { // 'allow' and 'deny'
+                for(allowed_perm in all_perms[ace_type]) {
+                    let p_id = allowed_perm.replace(/[ \/]/g, '_') 
+                    let checkbox = group_table.find(`.perm_checkbox[permission="${allowed_perm}"]`).filter(function() {
+                        return $(this).attr('ptype') === ace_type
+                    })
+                    checkbox.prop('checked', true)
+                    if(all_perms[ace_type][allowed_perm].inherited) {
+                        // can't uncheck inherited permissions.
+                        checkbox.prop('disabled', true)
+                    }
+                }
+            }
         }
         else {
             // can't get permissions for this username/filepath - reset everything into a blank state
             group_table.find('.groupcheckbox').prop('disabled', true)
             group_table.find('.groupcheckbox').prop('checked', false)
+            group_table.find('.perm_checkbox').prop('disabled', true)
+            group_table.find('.perm_checkbox').prop('checked', false)
             $(`#${id_prefix}_header_username`).text('')
         }
 
@@ -282,9 +386,15 @@ function define_grouped_permission_checkboxes(id_prefix, which_groups = null) {
     define_attribute_observer(group_table, 'username', update_group_checkboxes)
     define_attribute_observer(group_table, 'filepath', update_group_checkboxes)
 
-    //Update permissions when checkbox is clicked:
+    //Update permissions when group checkbox is clicked:
     group_table.find('.groupcheckbox').change(function(){
         toggle_permission_group( group_table.attr('filepath'), group_table.attr('username'), $(this).attr('group'), $(this).attr('ptype'), $(this).prop('checked'))
+        update_group_checkboxes()// reload checkboxes
+    })
+    
+    //Update permissions when individual permission checkbox is clicked:
+    group_table.find('.perm_checkbox').change(function(){
+        toggle_permission( group_table.attr('filepath'), group_table.attr('username'), $(this).attr('permission'), $(this).attr('ptype'), $(this).prop('checked'))
         update_group_checkboxes()// reload checkboxes
     })
 

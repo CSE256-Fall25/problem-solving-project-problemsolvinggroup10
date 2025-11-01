@@ -16,8 +16,8 @@ show_starter_dialogs = false; // set this to "false" to disable the survey and 3
 // Make permissions dialog:
 perm_dialog = define_new_dialog('permdialog', title = 'Permissions', options = {
     // Standard jQuery UI options. See https://jqueryui.com/dialog/
-    height: 500,
-    width: 400,
+    height: 650,
+    width: 500,
     buttons: {
         OK: {
             text: "OK",
@@ -184,8 +184,10 @@ perm_remove_user_button.click(function () {
 perm_dialog.append(obj_name_div);
 perm_dialog.append($('<div id="permissions_user_title">Group or user names:</div>'));
 
-// Add a visible hint that toggles based on whether a user is selected. Initially hidden.
-const select_user_hint = $('<div id="permdialog_user_hint" class="section" style="color:#a00; display:none;">Select a user first.</div>');
+// Add a visible hint that toggles based on whether a user is selected. Initially shown.
+const select_user_hint = $('<div id="permdialog_user_hint"><span class="oi oi-warning" style="color:#d9534f;margin-right:5px;font-size:1.1em;"></span><strong style="color:#d9534f;font-size:1.1em;">Select a user first to edit permissions.</strong></div>');
+// Hide initially (will be shown when no user is selected)
+select_user_hint.hide();
 // Insert the hint right under the title (before the list)
 perm_dialog.append(select_user_hint);
 
@@ -221,6 +223,47 @@ define_attribute_observer(grouped_permissions, 'username', function (uname) {
         $('#permdialog_user_hint').show();
     } else {
         $('#permdialog_user_hint').hide();
+    }
+});
+
+// Add interactive feedback when users try to click permissions without selecting a user
+grouped_permissions.on('click', function(e) {
+    let username = grouped_permissions.attr('username');
+    
+    // If no user is selected and they clicked on the permissions table
+    if (!username || username.length === 0) {
+        // Pulse the hint message
+        let hint = $('#permdialog_user_hint');
+        hint.addClass('pulse');
+        setTimeout(function() {
+            hint.removeClass('pulse');
+        }, 500);
+        
+        // Highlight the user list area with a red border
+        file_permission_users.stop().css({
+            'border': '3px solid #d9534f',
+            'box-shadow': '0 0 10px rgba(217, 83, 79, 0.5)',
+            'transition': 'all 0.3s ease'
+        });
+        
+        // After 1.5 seconds, fade back to normal
+        setTimeout(function() {
+            file_permission_users.css({
+                'border': '',
+                'box-shadow': ''
+            });
+        }, 1500);
+        
+        // Log the action for tracking
+        emitter.dispatchEvent(new CustomEvent('userEvent', { 
+            detail: new ClickEntry(
+                ActionEnum.CLICK, 
+                (e.clientX + window.pageXOffset), 
+                (e.clientY + window.pageYOffset), 
+                'permissions table: attempted click without user selected',
+                new Date().getTime()
+            )
+        }));
     }
 });
 
@@ -263,18 +306,6 @@ function make_all_users_list(id_prefix, attr_set_id, height = 80) {
     return all_user_list;
 }
 
-// populate and open the "permissions entry" dialog for a given file
-function open_permission_entry(file_path) {
-    let file_obj = path_to_file[file_path];
-
-    $('#perm_entry_username').text('');
-    $('.perm_entry_checkcell').empty();
-
-    // Ensure the "Change..." label is clearer in the Permission Entry dialog:
-    $('#perm_entry_change_user').text('Select user…');
-
-    $('#permentry').dialog('open');
-}
 
 // populate and open the "advanced" dialog for a given file
 function open_advanced_dialog(file_path) {
@@ -577,92 +608,6 @@ let user_select_contents = $("#user_select_dialog").dialog({
     }
 });
 
-// ------------------------------
-// Permission Entry dialog (per-entry grant/deny UI)
-// ------------------------------
-let perm_entry_dialog = $('#permentry').dialog({
-    modal: true,
-    autoOpen: false,
-    height: 500,
-    width: 400,
-    appendTo: "#html-loc",
-    position: { my: "top", at: "top", of: $('#html-loc') },
-    buttons: {
-        OK: {
-            text: "OK",
-            id: "permission-entry-ok-button",
-            click: function () {
-                open_advanced_dialog($('#advdialog').attr('filepath')); // redo advanced dialog (recalc permissions)
-                perm_dialog.attr('filepath', filepath); // reload contents of permissions dialog
-                $(this).dialog("close");
-            }
-        }
-    }
-});
-
-// Build the Permission Entry table
-for (let p of Object.values(permissions)) {
-    let row = $(`<tr id="perm_entry_row_${p}">
-        <td id="perm_entry_row_${p}_cell">${p}</td>
-    </tr>`);
-    for (let ace_type of ['allow', 'deny']) {
-        row.append(`<td id="perm_entry_row_${p}_${ace_type}" class="perm_entry_checkcell" perm="${p}" type="${ace_type}"></td>`);
-    }
-    $('#perm_entry_table').append(row);
-}
-
-$('#adv_perm_edit').click(function () {
-    let filepath = $('#advdialog').attr('filepath');
-    open_permission_entry(filepath);
-});
-
-$('#perm_entry_change_user').click(function () {
-    open_user_select('perm_entry_username');
-});
-
-// Observe user selection changes in Permission Entry dialog
-perm_entry_user_observer = new MutationObserver(function (mutationsList, observer) {
-    for (let mutation of mutationsList) {
-        if (mutation.type === 'attributes') {
-            if (mutation.attributeName === 'selected_user') {
-
-                let filepath = $('#advdialog').attr('filepath'); // TODO: maybe set and use own filepath in this dialog.
-                let file_obj = path_to_file[filepath];
-
-                // get rid of previous checkboxes:
-                $('.perm_entry_checkcell').empty();
-                // by default, put unchecked checkboxes everywhere:
-                $('.perm_entry_checkcell').each(function (i) {
-                    let cell_id = $(this).attr('id');
-                    let checkbox = $(`<input type="checkbox" id="${cell_id}_checkbox" class="perm_entry_checkbox"></input>`);
-                    $(this).append(checkbox);
-                });
-
-                let all_perms = get_total_permissions(file_obj, $('#perm_entry_username').attr('selected_user'));
-                for (let ace_type in all_perms) {
-                    for (let p in all_perms[ace_type]) {
-                        let checkbox = $(document.getElementById(`perm_entry_row_${p}_${ace_type}_checkbox`));
-                        checkbox.prop('checked', true);
-                        if (all_perms[ace_type][p].inherited) {
-                            // can't uncheck inherited permissions.
-                            checkbox.prop('disabled', true);
-                        }
-                    }
-                }
-
-                $('.perm_entry_checkbox').change(function () {
-                    let username = $('#perm_entry_username').attr('selected_user');
-                    let filepath = $('#advdialog').attr('filepath');
-                    toggle_permission(filepath, username, $(this).parent().attr('perm'), $(this).parent().attr('type'), $(this).prop('checked'));
-
-                    // 🔔 notify icon refresher
-                    $(document).trigger('permissionsChanged');
-                });
-            }
-        }
-    }
-});
-perm_entry_user_observer.observe(document.getElementById('perm_entry_username'), { attributes: true });
 
 // ------------------------------
 // Pre- and Post- dialogs

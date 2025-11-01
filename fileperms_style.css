@@ -36,3 +36,65 @@
 .no-close .ui-dialog-titlebar-close {
     display: none;
 }
+
+/* Expandable permission groups styling */
+.group_row td:first-child {
+    font-weight: bold;
+}
+
+.group_row:hover {
+    background-color: #f0f0f0;
+}
+
+.sub_perm_row {
+    background-color: #f9f9f9 !important;
+}
+
+.sub_perm_row:hover {
+    background-color: #f0f0f0 !important;
+}
+
+.sub_perm_row td {
+    border-top: none !important;
+}
+
+/* Smooth transitions for expand/collapse icons */
+.oi-chevron-right, .oi-chevron-bottom {
+    transition: transform 0.2s ease;
+}
+
+/* Visual styling for indeterminate checkboxes */
+input[type="checkbox"]:indeterminate {
+    opacity: 0.8;
+}
+
+/* Make chevron icons more visible */
+.oi-chevron-right, .oi-chevron-bottom {
+    color: #666;
+}
+
+.group_row:hover .oi-chevron-right,
+.group_row:hover .oi-chevron-bottom {
+    color: #333;
+}
+
+/* "Select a user first" hint styling */
+#permdialog_user_hint {
+    background-color: #f2dede;
+    padding: 10px;
+    border-radius: 4px;
+    border: 2px solid #d9534f;
+    margin: 5px 0;
+    transition: all 0.3s ease;
+}
+
+/* Pulse animation for hint */
+@keyframes pulse-hint {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.02); }
+    100% { transform: scale(1); }
+}
+
+#permdialog_user_hint.pulse {
+    animation: pulse-hint 0.5s ease;
+}
