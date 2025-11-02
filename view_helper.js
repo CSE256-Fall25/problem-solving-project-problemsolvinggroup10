@@ -214,7 +214,7 @@ function define_grouped_permission_checkboxes(id_prefix, which_groups = null) {
             <th id="${id_prefix}_header_p" width="99%">Permissions for <span id="${id_prefix}_header_username"></span>
             </th>
             <th id="${id_prefix}_header_allow">Allow</th>
-            <th id="${id_prefix}_header_deny">Deny</th>
+            <th id="${id_prefix}_header_deny" title="Deny always overrides Allow">Deny</th>
         </tr>
     </table>
     `)
@@ -388,13 +388,46 @@ function define_grouped_permission_checkboxes(id_prefix, which_groups = null) {
 
     //Update permissions when group checkbox is clicked:
     group_table.find('.groupcheckbox').change(function(){
-        toggle_permission_group( group_table.attr('filepath'), group_table.attr('username'), $(this).attr('group'), $(this).attr('ptype'), $(this).prop('checked'))
+        let group = $(this).attr('group');
+        let ptype = $(this).attr('ptype');
+        let is_checked = $(this).prop('checked');
+        
+        // If Deny is being checked, uncheck the corresponding Allow (since Deny overrides Allow)
+        if(ptype === 'deny' && is_checked) {
+            let allow_checkbox = group_table.find(`#${id_prefix}_${group}_allow_checkbox`);
+            if(allow_checkbox.prop('checked')) {
+                // Uncheck the allow first
+                allow_checkbox.prop('checked', false);
+                toggle_permission_group(group_table.attr('filepath'), group_table.attr('username'), group, 'allow', false);
+            }
+        }
+        
+        toggle_permission_group( group_table.attr('filepath'), group_table.attr('username'), group, ptype, is_checked)
         update_group_checkboxes()// reload checkboxes
     })
     
     //Update permissions when individual permission checkbox is clicked:
     group_table.find('.perm_checkbox').change(function(){
-        toggle_permission( group_table.attr('filepath'), group_table.attr('username'), $(this).attr('permission'), $(this).attr('ptype'), $(this).prop('checked'))
+        let permission = $(this).attr('permission');
+        let ptype = $(this).attr('ptype');
+        let is_checked = $(this).prop('checked');
+        
+        // If Deny is being checked, uncheck the corresponding Allow (since Deny overrides Allow)
+        if(ptype === 'deny' && is_checked) {
+            // Find all checkboxes for this permission with allow type
+            let allow_checkboxes = group_table.find(`.perm_checkbox[permission="${permission}"]`).filter(function() {
+                return $(this).attr('ptype') === 'allow';
+            });
+            
+            allow_checkboxes.each(function() {
+                if($(this).prop('checked')) {
+                    $(this).prop('checked', false);
+                    toggle_permission(group_table.attr('filepath'), group_table.attr('username'), permission, 'allow', false);
+                }
+            });
+        }
+        
+        toggle_permission( group_table.attr('filepath'), group_table.attr('username'), permission, ptype, is_checked)
         update_group_checkboxes()// reload checkboxes
     })
 

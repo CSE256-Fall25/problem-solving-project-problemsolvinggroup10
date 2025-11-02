@@ -98,3 +98,40 @@ input[type="checkbox"]:indeterminate {
 #permdialog_user_hint.pulse {
     animation: pulse-hint 0.5s ease;
 }
+
+/* Deny column styling - make it more visually distinct since Deny overrides Allow */
+.groupcheckbox[ptype="deny"]:checked,
+.perm_checkbox[ptype="deny"]:checked {
+    accent-color: #d9534f;
+    transform: scale(1.1);
+}
+
+/* Visual indicators for Allow and Deny columns */
+th[id$="_header_allow"] {
+    color: #5cb85c;
+    font-weight: bold;
+}
+
+th[id$="_header_deny"] {
+    color: #d9534f;
+    font-weight: bold;
+}
+
+/* Add subtle background to Deny column cells to emphasize importance */
+td[id*="_deny_cell"] {
+    background-color: rgba(217, 83, 79, 0.03);
+}
+
+/* When hovering over Deny checkboxes, show they take precedence */
+.groupcheckbox[ptype="deny"]:hover,
+.perm_checkbox[ptype="deny"]:hover {
+    cursor: pointer;
+    filter: brightness(0.9);
+}
+
+/* Make checked Deny checkboxes stand out more */
+.groupcheckbox[ptype="deny"]:checked + label,
+.perm_checkbox[ptype="deny"]:checked + label {
+    color: #d9534f;
+    font-weight: bold;
+}
