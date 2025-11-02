@@ -82,18 +82,36 @@ $('<style id="permdialog-hover-style">\
 // Make button to add a new user to the list (clarify intent: Add user…):
 perm_add_user_select = define_new_user_select_field('perm_add_user', 'Add user…', on_user_change = function (selected_user) {
     let filepath = perm_dialog.attr('filepath');
-    // sanity check that a user is actually selected (and exists)
     if (selected_user && (selected_user.length > 0) && (selected_user in all_users)) {
         let expected_user_elem_id = `permdialog_file_user_${selected_user}`;
-        // if such a user element doesn't already exist, append it
-        if (file_permission_users.find(`#${expected_user_elem_id}`).length === 0) {
-            new_user_elem = make_user_elem('permdialog_file_user', selected_user);
+        let $existing = file_permission_users.find(`#${expected_user_elem_id}`);
+
+        // 1) If user is not in the list yet, add them
+        if ($existing.length === 0) {
+            var new_user_elem = make_user_elem('permdialog_file_user', selected_user);
             file_permission_users.append(new_user_elem);
-            // Optional: since user list changed, permissions view may change
-            // $(document).trigger('permissionsChanged'); // usually not needed just for listing
+            $existing = file_permission_users.find(`#${expected_user_elem_id}`);
         }
+
+        // 2) Auto-select the row we just added (or the existing one)
+        file_permission_users.find('.ui-selected').removeClass('ui-selected');
+        $existing.addClass('ui-selected');
+
+        // 3) Update selection state used by your code
+        file_permission_users.attr('selected_item', selected_user);
+        grouped_permissions.attr('username', selected_user); // this hides the "Select a user first" hint too
+
+        // 4) Keep it in view without jumping to bottom
+        $existing[0]?.scrollIntoView({ block: 'nearest' });
+
+        // (Optional) give keyboard focus to the row
+        $existing.attr('tabindex', -1)[0]?.focus?.();
+
+        // (Optional) notify anything listening for UI changes
+        // $(document).trigger('permissionsChanged');
     }
 });
+
 // Only show the button part (keep spacing similar to original)
 perm_add_user_select.find('span').hide();
 // Ensure no extra margin is injected around the Add user control
