@@ -209,10 +209,27 @@ function get_file_users(file_obj, users = {}, following_inheritance = false) {
 function get_aces_file_user(file_obj, username, following_inheritance = false) {
     let aces = [];
     for (let ace of file_obj.acl) {
+        // Check if this ACE applies to the user
+        // It applies if: 1) it's directly for this user, OR 2) user is a member of the group
+        let applies = false;
+        let from_group = null;
+        
         if (get_user_name(ace.who) === username) {
+            // Direct match - ACE is for this specific user
+            applies = true;
+        } else if (typeof(ace.who) !== 'string' && ace.who.users) {
+            // ace.who is a group object - check if user is a member
+            if (ace.who.users.includes(username)) {
+                applies = true;
+                from_group = ace.who.name; // Store which group this comes from
+            }
+        }
+        
+        if (applies) {
             aces.push({
                 ace: ace,
                 inherited: following_inheritance,
+                from_group: from_group // Track if this ACE comes from a group
             });
         }
     }
@@ -223,6 +240,20 @@ function get_aces_file_user(file_obj, username, following_inheritance = false) {
         // just return direct ACEs
         return aces;
     }
+}
+
+// Check if a specific permission for a user comes from a group membership
+// Returns the group name if it's from a group, or null if it's a direct permission
+function check_permission_from_group(file_obj, username, permission, is_allow_ace) {
+    let aces = get_aces_file_user(file_obj, username);
+    for (let ace_item of aces) {
+        if (ace_item.ace.permission === permission && ace_item.ace.is_allow_ace === is_allow_ace) {
+            if (ace_item.from_group) {
+                return ace_item.from_group; // Return the group name
+            }
+        }
+    }
+    return null; // No group found, it's a direct permission or doesn't exist
 }
 
 // summarize total cumulative permissions from given file and user

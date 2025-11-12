@@ -31,10 +31,21 @@ function define_attribute_observer(watched_elem_selector, watched_attribute, on_
 // Make an element for a user - this element would usually go into a selectable list of users. 
 // The element automatically creates an icon which varies based on whether it's a singular user or a group, 
 // and also adds any attributes you pass along
+// If it's a group, adds expandable functionality to show member users
 function make_user_elem(id_prefix, uname, user_attributes=null) {
-    user_elem = $(`<div class="ui-widget-content" id="${id_prefix}_${uname}" name="${uname}">
-        <span id="${id_prefix}_${uname}_icon" class="oi ${is_user(all_users[uname])?'oi-person':'oi-people'}"/> 
-        <span id="${id_prefix}_${uname}_text">${uname} </span>
+    let user_or_group = all_users[uname];
+    let is_group = !is_user(user_or_group);
+    
+    // For groups, add chevron icon and make it expandable
+    let chevron_html = '';
+    if(is_group) {
+        chevron_html = `<span id="${id_prefix}_${uname}_chevron" class="oi oi-chevron-right group-chevron" style="font-size:0.8em;margin-right:4px;cursor:pointer;"></span>`;
+    }
+    
+    user_elem = $(`<div class="ui-widget-content user-or-group-item ${is_group ? 'group-item' : 'user-item'}" id="${id_prefix}_${uname}" name="${uname}">
+        ${chevron_html}
+        <span id="${id_prefix}_${uname}_icon" class="oi ${is_group ? 'oi-people' : 'oi-person'}"/> 
+        <span id="${id_prefix}_${uname}_text" style="${is_group ? 'cursor:pointer;font-weight:500;' : ''}">${uname}</span>
     </div>`)
 
     if (user_attributes) {
@@ -42,6 +53,43 @@ function make_user_elem(id_prefix, uname, user_attributes=null) {
         for(uprop in user_attributes) {
             user_elem.attr(uprop, user_attributes[uprop])
         }
+    }
+    
+    // If it's a group, add click handler for expanding/collapsing
+    if(is_group && user_or_group.users) {
+        console.log(`Setting up click handler for group: ${uname}, members:`, user_or_group.users);
+        
+        // Mark as expandable group for styling
+        user_elem.attr('data-is-group', 'true');
+        user_elem.css('cursor', 'pointer');
+        
+        // Add mousedown handler (fires before jQuery UI selectable) for expanding/collapsing
+        // Use mousedown instead of click because jQuery UI selectable intercepts click events
+        user_elem.on('mousedown', function(e) {
+            // Only handle left mouse button
+            if(e.which !== 1) return;
+            
+            console.log(`Group mousedown: ${uname}`);
+            
+            // Toggle member visibility using data attribute
+            let members = $(`[data-group-parent="${id_prefix}_${uname}"]`);
+            console.log(`Found ${members.length} member elements to toggle`);
+            
+            if(members.length > 0) {
+                members.toggle();
+                
+                // Toggle chevron
+                let chevron = $(`#${id_prefix}_${uname}_chevron`);
+                if(chevron.hasClass('oi-chevron-right')) {
+                    chevron.removeClass('oi-chevron-right').addClass('oi-chevron-bottom');
+                } else {
+                    chevron.removeClass('oi-chevron-bottom').addClass('oi-chevron-right');
+                }
+            }
+            
+            // Let the event propagate so jQuery UI selectable can also select this group
+            // This allows editing group-level permissions
+        });
     }
 
     return user_elem
@@ -56,6 +104,97 @@ function make_user_list(id_prefix, usermap, add_attributes = false) {
         // make user element; if add_attributes is true, pass along usermap[uname] for attribute creation.
         user_elem = make_user_elem(id_prefix, uname, add_attributes ? usermap[uname] : null )
         u_elements.push(user_elem)
+        
+        // If it's a group, also create member elements
+        let user_or_group = all_users[uname];
+        if(!is_user(user_or_group) && user_or_group.users) {
+            console.log(`Creating member elements for group: ${uname}, members:`, user_or_group.users);
+            for(let member_name of user_or_group.users) {
+                console.log(`  Creating member element for: ${member_name} with data-group-parent="${id_prefix}_${uname}"`);
+                let member_elem = $(`<div class="ui-widget-content group-member-item" id="${id_prefix}_${uname}_member_${member_name}" name="${member_name}" data-group-parent="${id_prefix}_${uname}" data-is-member="true" style="display:none;padding-left:30px;background-color:#f9f9f9;font-size:0.9em;cursor:pointer;">
+                    <span class="oi oi-person" style="font-size:0.8em;color:#666;margin-right:4px;"/> 
+                    <span>${member_name}</span>
+                    <span style="color:#999;font-size:0.85em;margin-left:6px;">(from ${uname})</span>
+                </div>`)
+                
+                // Make member selectable - when clicked, create a standalone entry for individual permission editing
+                member_elem.click(function(e) {
+                    e.stopPropagation();
+                    
+                    // Get the actual member username (not the group name)
+                    let actual_member_name = $(this).attr('name');
+                    let parent_group_id = $(this).attr('data-group-parent');
+                    
+                    console.log(`Member clicked: ${actual_member_name}`);
+                    
+                    // Find the parent selectable list
+                    let user_list = $(this).parent();
+                    
+                    // Check if this member already exists as a standalone entry (not a group member)
+                    let standalone_elem = user_list.find(`#${id_prefix}_${actual_member_name}`).not('[data-is-member="true"]');
+                    
+                    if(standalone_elem.length > 0) {
+                        // Standalone entry exists, select it instead
+                        console.log(`Standalone entry found for ${actual_member_name}, selecting it`);
+                        user_list.children().removeClass('ui-selected');
+                        standalone_elem.addClass('ui-selected');
+                        user_list.attr('selected_item', actual_member_name);
+                        
+                        let selection_handler = user_list.data('selection_handler');
+                        if(selection_handler) {
+                            selection_handler(actual_member_name, e, {selected: standalone_elem[0]});
+                        }
+                    } else {
+                        // No standalone entry exists, we need to create one
+                        console.log(`No standalone entry for ${actual_member_name}, creating one`);
+                        
+                        // Get the current filepath from the user list's parent dialog
+                        let current_filepath = user_list.closest('[filepath]').attr('filepath');
+                        
+                        if(current_filepath && current_filepath in path_to_file) {
+                            // Create a new standalone user element
+                            let new_user_elem = make_user_elem(id_prefix, actual_member_name, {filepath: current_filepath});
+                            
+                            // Find where to insert it (after the parent group's last member)
+                            let parent_group_elem = user_list.find(`#${parent_group_id}`);
+                            let insert_after = parent_group_elem;
+                            
+                            // Find the last member of this group
+                            let group_members = user_list.find(`[data-group-parent="${parent_group_id}"]`);
+                            if(group_members.length > 0) {
+                                insert_after = group_members.last();
+                            }
+                            
+                            // Insert the new element
+                            new_user_elem.insertAfter(insert_after);
+                            
+                            // Make the new element selectable by jQuery UI
+                            new_user_elem.addClass('ui-selectee');
+                            
+                            // Select the new element
+                            user_list.children().removeClass('ui-selected');
+                            new_user_elem.addClass('ui-selected');
+                            user_list.attr('selected_item', actual_member_name);
+                            
+                            // Trigger the selection handler to show permissions for this user
+                            let selection_handler = user_list.data('selection_handler');
+                            if(selection_handler) {
+                                selection_handler(actual_member_name, e, {selected: new_user_elem[0]});
+                            }
+                        }
+                    }
+                });
+                
+                // Copy attributes from parent if needed
+                if(add_attributes && usermap[uname]) {
+                    for(uprop in usermap[uname]) {
+                        member_elem.attr(uprop, usermap[uname][uprop])
+                    }
+                }
+                
+                u_elements.push(member_elem)
+            }
+        }
     }
     return u_elements
 }
@@ -129,6 +268,9 @@ function define_single_select_list(id_prefix, on_selection_change = function(sel
             }))
         }
     })
+    
+    // Store the selection handler so group members can use it
+    select_list.data('selection_handler', on_selection_change)
 
     select_list.unselect = function() {
         select_list.find('.ui-selectee').removeClass('ui-selected')
@@ -228,10 +370,19 @@ function define_grouped_permission_checkboxes(id_prefix, which_groups = null) {
         let is_expandable = (g !== 'Special_permissions' && g !== 'Full_control' && g in permission_groups)
         
         // Create the main group row with expand/collapse icon
+        let group_label = g;
+        let group_title = '';
+        
+        // Rename Read_Execute to just "Execute" for clarity
+        if(g === 'Read_Execute') {
+            group_label = 'Execute';
+            group_title = 'title="Grants Read + Execute permissions"';
+        }
+        
         let row = $(`<tr id="${id_prefix}_row_${g}" class="group_row">
-            <td id="${id_prefix}_${g}_name" style="cursor:${is_expandable ? 'pointer' : 'default'};">
+            <td id="${id_prefix}_${g}_name" style="cursor:${is_expandable ? 'pointer' : 'default'};" ${group_title}>
                 ${is_expandable ? '<span id="' + id_prefix + '_' + g + '_expand_icon" class="oi oi-chevron-right" style="font-size:0.9em;margin-right:4px;"></span>' : ''}
-                ${g}
+                ${group_label}
             </td>
         </tr>`)
         for(let ace_type of ['allow', 'deny']) {
@@ -243,7 +394,14 @@ function define_grouped_permission_checkboxes(id_prefix, which_groups = null) {
         
         // Add sub-rows for individual permissions in this group (if expandable and not Full_control)
         if(is_expandable) {
-            for(let perm of permission_groups[g]) {
+            let perms_to_show = permission_groups[g];
+            
+            // For Read_Execute, only show the unique EXECUTE permission (avoid duplicating Read permissions)
+            if(g === 'Read_Execute') {
+                perms_to_show = [permissions.EXECUTE]; // Only show "traverse folder/execute file"
+            }
+            
+            for(let perm of perms_to_show) {
                 let p_id = perm.replace(/[ \/]/g, '_')
                 let sub_row = $(`<tr id="${id_prefix}_row_${g}_${p_id}" class="sub_perm_row" group="${g}" style="display:none;background-color:#f5f5f5;">
                     <td id="${id_prefix}_${g}_${p_id}_name" style="padding-left:30px;font-size:0.9em;">${perm}</td>
@@ -317,16 +475,37 @@ function define_grouped_permission_checkboxes(id_prefix, which_groups = null) {
                     let checkbox = group_table.find(`#${id_prefix}_${allowed_group}_${ace_type}_checkbox`)
                     checkbox.prop('checked', true)
                     checkbox.prop('indeterminate', false) // Reset indeterminate state
-                    if(grouped_perms[ace_type][allowed_group].inherited) {
-                        // can't uncheck inherited permissions.
-                        checkbox.prop('disabled', true)
-                    }
+                    // TEMPORARILY DISABLED - testing group inheritance warning
+                    // if(grouped_perms[ace_type][allowed_group].inherited) {
+                    //     // can't uncheck inherited permissions.
+                    //     checkbox.prop('disabled', true)
+                    // }
+                }
+            }
+            
+            // Special handling for Execute (Read_Execute): only check if EXECUTE permission is present
+            // (not the full Read_Execute group)
+            for(let ace_type of ['allow', 'deny']) {
+                let execute_checkbox = group_table.find(`#${id_prefix}_Read_Execute_${ace_type}_checkbox`);
+                
+                // Check if EXECUTE permission is present
+                if(all_perms[ace_type] && all_perms[ace_type][permissions.EXECUTE]) {
+                    execute_checkbox.prop('checked', true);
+                    execute_checkbox.prop('indeterminate', false);
+                    // TEMPORARILY DISABLED - testing group inheritance warning
+                    // if(all_perms[ace_type][permissions.EXECUTE].inherited) {
+                    //     execute_checkbox.prop('disabled', true);
+                    // }
+                } else {
+                    execute_checkbox.prop('checked', false);
+                    execute_checkbox.prop('indeterminate', false);
                 }
             }
             
             // Check for partial/indeterminate states (when some but not all permissions in a group are checked)
+            // Skip Read_Execute since we handle it specially (only checks EXECUTE permission)
             for(let g of which_groups) {
-                if(g !== 'Special_permissions' && g !== 'Full_control' && g in permission_groups) {
+                if(g !== 'Special_permissions' && g !== 'Full_control' && g !== 'Read_Execute' && g in permission_groups) {
                     for(let ace_type of ['allow', 'deny']) {
                         let group_perms = permission_groups[g]
                         let checked_count = 0
@@ -355,9 +534,6 @@ function define_grouped_permission_checkboxes(id_prefix, which_groups = null) {
             }
             
             // Update individual permission checkboxes
-            // Note: Some permissions appear in multiple groups (e.g., "list folder/read contents" 
-            // appears in both Read and Read_Execute). When a permission is set, we check ALL 
-            // instances of that permission checkbox across all groups.
             // (we already have all_perms from above, no need to call get_total_permissions again)
             for( ace_type in all_perms) { // 'allow' and 'deny'
                 for(allowed_perm in all_perms[ace_type]) {
@@ -366,10 +542,11 @@ function define_grouped_permission_checkboxes(id_prefix, which_groups = null) {
                         return $(this).attr('ptype') === ace_type
                     })
                     checkbox.prop('checked', true)
-                    if(all_perms[ace_type][allowed_perm].inherited) {
-                        // can't uncheck inherited permissions.
-                        checkbox.prop('disabled', true)
-                    }
+                    // TEMPORARILY DISABLED - testing group inheritance warning
+                    // if(all_perms[ace_type][allowed_perm].inherited) {
+                    //     // can't uncheck inherited permissions.
+                    //     checkbox.prop('disabled', true)
+                    // }
                 }
             }
         }
@@ -388,9 +565,57 @@ function define_grouped_permission_checkboxes(id_prefix, which_groups = null) {
 
     //Update permissions when group checkbox is clicked:
     group_table.find('.groupcheckbox').change(function(){
+        console.log('=== GROUP CHECKBOX CHANGED ===');
+        
         let group = $(this).attr('group');
         let ptype = $(this).attr('ptype');
         let is_checked = $(this).prop('checked');
+        let filepath = group_table.attr('filepath');
+        let username = group_table.attr('username');
+        
+        console.log(`Group: ${group}, Type: ${ptype}, Checked: ${is_checked}, User: ${username}`);
+        console.log(`Condition check: ptype==='allow'? ${ptype === 'allow'}, !is_checked? ${!is_checked}`);
+        
+        // Check if trying to UNCHECK an ALLOW or DENY permission that comes from a group
+        if(!is_checked) {
+            console.log(`Checking if group ${group} (${ptype}) for user ${username} comes from group inheritance`);
+            
+            // Check all permissions in this group to see if any come from group membership
+            let perms_to_check = (group === 'Read_Execute') ? [permissions.EXECUTE] : permission_groups[group];
+            let from_group = null;
+            let is_allow_ace = (ptype === 'allow');
+            
+            for(let perm of perms_to_check) {
+                from_group = check_permission_from_group(path_to_file[filepath], username, perm, is_allow_ace);
+                console.log(`  Permission ${perm} (${ptype}) from group: ${from_group}`);
+                if(from_group) break; // Found one from a group
+            }
+            
+            if(from_group) {
+                console.log(`Permission is inherited from group ${from_group}, showing warning dialog`);
+                
+                // Permission comes from a group - show warning and prevent unchecking
+                $(this).prop('checked', true); // Revert the checkbox
+                
+                // Show warning dialog
+                $('#group_inherited_username').text(username);
+                $('#group_inherited_username2').text(username);
+                $('#group_inherited_groupname').text(from_group);
+                $('#group_inherited_groupname2').text(from_group);
+                
+                // Check if dialog exists
+                if($('#group_inherited_warning_dialog').length > 0) {
+                    console.log('Dialog element found, opening...');
+                    $('#group_inherited_warning_dialog').dialog('open');
+                } else {
+                    console.error('Dialog element not found!');
+                }
+                
+                return; // Don't proceed with toggling
+            } else {
+                console.log('No group inheritance found, allowing removal');
+            }
+        }
         
         // If Deny is being checked, uncheck the corresponding Allow (since Deny overrides Allow)
         if(ptype === 'deny' && is_checked) {
@@ -398,11 +623,23 @@ function define_grouped_permission_checkboxes(id_prefix, which_groups = null) {
             if(allow_checkbox.prop('checked')) {
                 // Uncheck the allow first
                 allow_checkbox.prop('checked', false);
-                toggle_permission_group(group_table.attr('filepath'), group_table.attr('username'), group, 'allow', false);
+                
+                // For Execute (Read_Execute), only toggle EXECUTE permission
+                if(group === 'Read_Execute') {
+                    toggle_permission(filepath, username, permissions.EXECUTE, 'allow', false);
+                } else {
+                    toggle_permission_group(filepath, username, group, 'allow', false);
+                }
             }
         }
         
-        toggle_permission_group( group_table.attr('filepath'), group_table.attr('username'), group, ptype, is_checked)
+        // For Execute (Read_Execute), only toggle the EXECUTE permission, not the whole Read_Execute group
+        if(group === 'Read_Execute') {
+            toggle_permission(filepath, username, permissions.EXECUTE, ptype, is_checked);
+        } else {
+            toggle_permission_group(filepath, username, group, ptype, is_checked);
+        }
+        
         update_group_checkboxes()// reload checkboxes
     })
     
@@ -411,6 +648,42 @@ function define_grouped_permission_checkboxes(id_prefix, which_groups = null) {
         let permission = $(this).attr('permission');
         let ptype = $(this).attr('ptype');
         let is_checked = $(this).prop('checked');
+        let filepath = group_table.attr('filepath');
+        let username = group_table.attr('username');
+        
+        // Check if trying to UNCHECK an ALLOW or DENY permission that comes from a group
+        if(!is_checked) {
+            console.log(`Checking if permission ${permission} (${ptype}) for user ${username} comes from group inheritance`);
+            
+            let is_allow_ace = (ptype === 'allow');
+            let from_group = check_permission_from_group(path_to_file[filepath], username, permission, is_allow_ace);
+            console.log(`  Permission ${permission} (${ptype}) from group: ${from_group}`);
+            
+            if(from_group) {
+                console.log(`Permission is inherited from group ${from_group}, showing warning dialog`);
+                
+                // Permission comes from a group - show warning and prevent unchecking
+                $(this).prop('checked', true); // Revert the checkbox
+                
+                // Show warning dialog
+                $('#group_inherited_username').text(username);
+                $('#group_inherited_username2').text(username);
+                $('#group_inherited_groupname').text(from_group);
+                $('#group_inherited_groupname2').text(from_group);
+                
+                // Check if dialog exists
+                if($('#group_inherited_warning_dialog').length > 0) {
+                    console.log('Dialog element found, opening...');
+                    $('#group_inherited_warning_dialog').dialog('open');
+                } else {
+                    console.error('Dialog element not found!');
+                }
+                
+                return; // Don't proceed with toggling
+            } else {
+                console.log('No group inheritance found, allowing removal');
+            }
+        }
         
         // If Deny is being checked, uncheck the corresponding Allow (since Deny overrides Allow)
         if(ptype === 'deny' && is_checked) {
@@ -422,12 +695,12 @@ function define_grouped_permission_checkboxes(id_prefix, which_groups = null) {
             allow_checkboxes.each(function() {
                 if($(this).prop('checked')) {
                     $(this).prop('checked', false);
-                    toggle_permission(group_table.attr('filepath'), group_table.attr('username'), permission, 'allow', false);
+                    toggle_permission(filepath, username, permission, 'allow', false);
                 }
             });
         }
         
-        toggle_permission( group_table.attr('filepath'), group_table.attr('username'), permission, ptype, is_checked)
+        toggle_permission(filepath, username, permission, ptype, is_checked)
         update_group_checkboxes()// reload checkboxes
     })
 
@@ -492,10 +765,11 @@ function define_permission_checkboxes(id_prefix, which_permissions = null){
                     let p_id = allowed_perm.replace(/[ \/]/g, '_') 
                     let checkbox = perm_table.find(`#${id_prefix}_${p_id}_${ace_type}_checkbox`)
                     checkbox.prop('checked', true)
-                    if(all_perms[ace_type][allowed_perm].inherited) {
-                        // can't uncheck inherited permissions.
-                        checkbox.prop('disabled', true)
-                    }
+                    // TEMPORARILY DISABLED - testing group inheritance warning
+                    // if(all_perms[ace_type][allowed_perm].inherited) {
+                    //     // can't uncheck inherited permissions.
+                    //     checkbox.prop('disabled', true)
+                    // }
                 }
             }
         }

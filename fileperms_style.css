@@ -135,3 +135,55 @@ td[id*="_deny_cell"] {
     color: #d9534f;
     font-weight: bold;
 }
+
+/* Group/User list styling */
+.group-item {
+    font-weight: 500;
+    border-left: 3px solid #2196f3;
+    cursor: pointer !important;
+    transition: background-color 0.2s ease;
+}
+
+.group-item:hover {
+    background-color: #e3f2fd !important;
+}
+
+/* Make it clear the group is clickable */
+.group-item:active {
+    background-color: #bbdefb !important;
+}
+
+.group-member-item {
+    border-left: 2px solid #90caf9;
+    cursor: pointer;
+}
+
+.group-member-item:hover {
+    background-color: #e8e8e8 !important;
+}
+
+.group-member-item.ui-selected {
+    background-color: #007fff !important;
+    color: white !important;
+}
+
+.group-member-item.ui-selected span {
+    color: white !important;
+}
+
+.group-chevron {
+    transition: transform 0.2s ease;
+    color: #2196f3;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 3px;
+}
+
+.group-chevron:hover {
+    background-color: #e3f2fd;
+    color: #1976d2;
+}
+
+.user-item {
+    border-left: 3px solid transparent;
+}

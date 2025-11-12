@@ -16,7 +16,7 @@ show_starter_dialogs = false; // set this to "false" to disable the survey and 3
 // Make permissions dialog:
 perm_dialog = define_new_dialog('permdialog', title = 'Permissions', options = {
     // Standard jQuery UI options. See https://jqueryui.com/dialog/
-    height: 650,
+    height: 740,  // Increased from 650 to accommodate inheritance checkboxes
     width: 500,
     buttons: {
         OK: {
@@ -44,11 +44,25 @@ obj_name_div = $('<div id="permdialog_objname" class="section">Object Name: <spa
 // Make the div with the explanation about special permissions/advanced settings:
 advanced_expl_div = $('<div id="permdialog_advanced_explantion_text">For special permissions or advanced settings, click Advanced.</div>');
 
+// Create permission inheritance checkboxes
+let perm_inheritance_div = $(`
+<div id="perm_inheritance_section" class="section" style="margin-top:12px;margin-bottom:12px;padding:10px;background-color:#f9f9f9;border:1px solid #ddd;border-radius:4px;">
+    <div id="perm_inheritance_checkbox_div" style="margin-bottom:10px;">
+        <input type="checkbox" id="perm_inheritance" name="inherit">
+        <label for="perm_inheritance" id="perm_inheritance_label" style="cursor:pointer;">Use same permissions as parent folder</label>
+    </div>
+    <div id="perm_replace_child_div" style="display:none;">
+        <input type="checkbox" id="perm_replace_child_permissions" name="replace_child">
+        <label for="perm_replace_child_permissions" id="perm_replace_child_permissions_label" style="cursor:pointer;">Apply these permissions to all files and subfolders inside this folder</label>
+    </div>
+</div>
+`);
+
 // Make the (grouped) permission checkboxes table:
 grouped_permissions = define_grouped_permission_checkboxes('permdialog_grouped_permissions');
 grouped_permissions.addClass('section'); // add spacing via the 'section' class
-// Additional spacing above the permissions for clearer grouping:
-grouped_permissions.css({ marginTop: '16px' });
+// Reduced top margin since inheritance section now appears above
+grouped_permissions.css({ marginTop: '8px' });
 
 // Make the list of users (empty for now - will get populated when we know the file):
 file_permission_users = define_single_select_list('permdialog_file_user_list', function (selected_user, e, ui) {
@@ -90,6 +104,65 @@ perm_add_user_select = define_new_user_select_field('perm_add_user', 'Add user�
         if ($existing.length === 0) {
             var new_user_elem = make_user_elem('permdialog_file_user', selected_user);
             file_permission_users.append(new_user_elem);
+            
+            // If it's a group, also add member elements
+            let user_or_group = all_users[selected_user];
+            if(!is_user(user_or_group) && user_or_group.users) {
+                for(let member_name of user_or_group.users) {
+                    let member_elem = $(`<div class="ui-widget-content group-member-item ui-selectee" id="permdialog_file_user_${selected_user}_member_${member_name}" name="${member_name}" data-group-parent="permdialog_file_user_${selected_user}" data-is-member="true" style="display:none;padding-left:30px;background-color:#f9f9f9;font-size:0.9em;cursor:pointer;">
+                        <span class="oi oi-person" style="font-size:0.8em;color:#666;margin-right:4px;"/> 
+                        <span>${member_name}</span>
+                        <span style="color:#999;font-size:0.85em;margin-left:6px;">(from ${selected_user})</span>
+                    </div>`);
+                    
+                    // Make member selectable - when clicked, create a standalone entry
+                    member_elem.click(function(e) {
+                        e.stopPropagation();
+                        
+                        let actual_member_name = $(this).attr('name');
+                        let parent_group_id = $(this).attr('data-group-parent');
+                        let user_list = $(this).parent();
+                        
+                        // Check if standalone entry exists
+                        let standalone_elem = user_list.find(`#permdialog_file_user_${actual_member_name}`).not('[data-is-member="true"]');
+                        
+                        if(standalone_elem.length > 0) {
+                            // Select existing standalone entry
+                            user_list.children().removeClass('ui-selected');
+                            standalone_elem.addClass('ui-selected');
+                            user_list.attr('selected_item', actual_member_name);
+                            
+                            let selection_handler = user_list.data('selection_handler');
+                            if(selection_handler) {
+                                selection_handler(actual_member_name, e, {selected: standalone_elem[0]});
+                            }
+                        } else {
+                            // Create new standalone entry
+                            let new_standalone = make_user_elem('permdialog_file_user', actual_member_name, {filepath: filepath});
+                            
+                            // Find where to insert it
+                            let group_members = user_list.find(`[data-group-parent="${parent_group_id}"]`);
+                            let insert_after = group_members.length > 0 ? group_members.last() : user_list.find(`#${parent_group_id}`);
+                            
+                            new_standalone.insertAfter(insert_after);
+                            new_standalone.addClass('ui-selectee');
+                            
+                            // Select it
+                            user_list.children().removeClass('ui-selected');
+                            new_standalone.addClass('ui-selected');
+                            user_list.attr('selected_item', actual_member_name);
+                            
+                            let selection_handler = user_list.data('selection_handler');
+                            if(selection_handler) {
+                                selection_handler(actual_member_name, e, {selected: new_standalone[0]});
+                            }
+                        }
+                    });
+                    
+                    file_permission_users.append(member_elem);
+                }
+            }
+            
             $existing = file_permission_users.find(`#${expected_user_elem_id}`);
         }
 
@@ -136,6 +209,25 @@ cant_remove_dialog.html(`
     You can't remove <span id="cant_remove_username_1" class="cant_remove_username"></span> because this object is inheriting permissions from 
     its parent. To remove <span id="cant_remove_username_2" class="cant_remove_username"></span>, you must prevent this object from inheriting permissions.
     Turn off the option for inheriting permissions, and then try removing <span id="cant_remove_username_3" class="cant_remove_username"></span> again.
+</div>`);
+
+// Make a dialog for when user tries to remove permissions inherited from a group
+let group_inherited_warning_dialog = define_new_dialog('group_inherited_warning_dialog', 'Cannot Remove Group Permission', {
+    buttons: {
+        OK: {
+            text: "OK",
+            id: "group-inherited-ok-button",
+            click: function () {
+                $(this).dialog("close");
+            }
+        }
+    }
+});
+group_inherited_warning_dialog.html(`
+<div id="group_inherited_text" style="padding:10px;">
+    <p><strong><span id="group_inherited_username"></span></strong> inherits this permission from the <strong><span id="group_inherited_groupname"></span></strong> group.</p>
+    <p style="font-size:1.1em;margin-top:15px;"><strong>To modify individual permissions:</strong></p>
+    <p style="margin-left:20px;">Turn off the deny permission for the <strong><span id="group_inherited_groupname2"></span></strong> group first.</p>
 </div>`);
 
 // Make a confirmation "are you sure you want to remove?" dialog
@@ -213,6 +305,7 @@ perm_dialog.append(file_permission_users);
 perm_dialog.append(perm_add_user_select);
 // Keep Remove user button inline with the Add user control
 perm_add_user_select.append(perm_remove_user_button);
+perm_dialog.append(perm_inheritance_div);
 perm_dialog.append(grouped_permissions);
 perm_dialog.append(advanced_expl_div);
 
@@ -232,6 +325,22 @@ define_attribute_observer(perm_dialog, 'filepath', function () {
     // replace previous user list with the one we just generated:
     file_permission_users.empty();
     file_permission_users.append(file_user_list);
+    
+    // Update inheritance checkbox state based on the file
+    let file_obj = path_to_file[current_filepath];
+    if (file_obj.using_permission_inheritance) {
+        $('#perm_inheritance').prop('checked', true);
+    } else {
+        $('#perm_inheritance').prop('checked', false);
+    }
+    
+    // Show/hide the "replace child permissions" checkbox based on whether file has children
+    // Check if this file path exists in parent_to_children mapping
+    if (current_filepath in parent_to_children && parent_to_children[current_filepath].length > 0) {
+        $('#perm_replace_child_div').show();
+    } else {
+        $('#perm_replace_child_div').hide();
+    }
 });
 
 // Toggle the "Select a user first." hint based on grouped_permissions' "username" attribute.
@@ -282,6 +391,149 @@ grouped_permissions.on('click', function(e) {
                 new Date().getTime()
             )
         }));
+    }
+});
+
+// ------------------------------
+// Event handlers for inheritance checkboxes in main dialog
+// ------------------------------
+
+// Listen for changes to inheritance checkbox in main dialog:
+$('#perm_inheritance').change(function () {
+    let filepath = perm_dialog.attr('filepath');
+    let file_obj = path_to_file[filepath];
+    
+    if ($('#perm_inheritance').prop('checked')) {
+        // has just been turned on
+        file_obj.using_permission_inheritance = true;
+        emitState();
+
+        // 🔔 notify icon refresher
+        $(document).trigger('permissionsChanged');
+
+        perm_dialog.attr('filepath', filepath); // force reload 'permissions' dialog
+        // Also update advanced dialog if it's open
+        if ($('#advdialog').dialog('isOpen')) {
+            open_advanced_dialog(filepath);
+        }
+    }
+    else {
+        // has just been turned off - pop up dialog with add/remove/cancel
+        $(`<div id="add_remove_cancel" title="Security">
+            Warning: This will stop using permissions from the parent folder.<br/><br/>
+            - Click <strong>Add</strong> to keep the current inherited permissions as permanent permissions on this object<br/>
+            - Click <strong>Remove</strong> to remove all inherited permissions from this object<br/>
+            - Click <strong>Cancel</strong> to keep using parent folder permissions<br/>
+        </div>`).dialog({
+            modal: true,
+            width: 400,
+            appendTo: "#html-loc",
+            position: { my: "top", at: "top", of: $('#html-loc') },
+            buttons: {
+                Add: {
+                    text: "Add",
+                    id: "perm-inheritance-add-button",
+                    click: function () {
+                        let filepath = perm_dialog.attr('filepath');
+                        let file_obj = path_to_file[filepath];
+                        convert_parent_permissions(file_obj);
+
+                        // 🔔 notify icon refresher
+                        $(document).trigger('permissionsChanged');
+
+                        perm_dialog.attr('filepath', filepath); // force reload 'permissions' dialog
+                        // Also update advanced dialog if it's open
+                        if ($('#advdialog').dialog('isOpen')) {
+                            open_advanced_dialog(filepath);
+                        }
+                        $(this).dialog("close");
+                    },
+                },
+                Remove: {
+                    text: "Remove",
+                    id: "perm-inheritance-remove-button",
+                    click: function () {
+                        let filepath = perm_dialog.attr('filepath');
+                        let file_obj = path_to_file[filepath];
+                        file_obj.using_permission_inheritance = false;
+                        emitState();
+
+                        // 🔔 notify icon refresher
+                        $(document).trigger('permissionsChanged');
+
+                        perm_dialog.attr('filepath', filepath); // force reload 'permissions' dialog
+                        // Also update advanced dialog if it's open
+                        if ($('#advdialog').dialog('isOpen')) {
+                            open_advanced_dialog(filepath);
+                        }
+                        $(this).dialog("close");
+                    },
+                },
+                Cancel: {
+                    text: "Cancel",
+                    id: "perm-inheritance-cancel-button",
+                    click: function () {
+                        $('#perm_inheritance').prop('checked', true); // undo unchecking
+                        $(this).dialog("close");
+                    },
+                },
+            }
+        });
+    }
+});
+
+// Listen for changes to "replace child permissions" checkbox in main dialog:
+$('#perm_replace_child_permissions').change(function () {
+    if ($('#perm_replace_child_permissions').prop('checked')) {
+        // we only care when it's been checked (nothing happens on uncheck)
+        let filepath = perm_dialog.attr('filepath');
+        let file_obj = path_to_file[filepath];
+        
+        // Small delay to allow checkbox visual update before dialog opens
+        setTimeout(function() {
+            $(`<div id="replace_perm_dialog" title="Security">
+                This will apply these permissions to all files and subfolders inside <strong>${file_obj.filename}</strong>, replacing any custom permissions they have.<br/><br/>
+                Do you wish to continue?
+            </div>`).dialog({
+            modal: true,
+            position: { my: "top", at: "top", of: $('#html-loc') },
+            width: 450,
+            buttons: {
+                Yes: {
+                    text: "Yes",
+                    id: "perm-replace-yes-button",
+                    click: function () {
+                        let filepath = perm_dialog.attr('filepath');
+                        let file_obj = path_to_file[filepath];
+                        replace_child_perm_with_inherited(file_obj);
+
+                        // 🔔 notify icon refresher
+                        $(document).trigger('permissionsChanged');
+
+                        // Keep checkbox checked to indicate action was taken
+                        // Sync with advanced dialog
+                        $('#adv_perm_replace_child_permissions').prop('checked', true);
+
+                        perm_dialog.attr('filepath', filepath); // reload contents of permissions dialog
+                        // Also update advanced dialog if it's open
+                        if ($('#advdialog').dialog('isOpen')) {
+                            open_advanced_dialog(filepath);
+                        }
+                        $(this).dialog("close");
+                    },
+                },
+                No: {
+                    text: "No",
+                    id: "perm-replace-no-button",
+                    click: function () {
+                        $('#perm_replace_child_permissions').prop('checked', false); // undo checking
+                        $('#adv_perm_replace_child_permissions').prop('checked', false); // also sync advanced dialog
+                        $(this).dialog("close");
+                    },
+                },
+            }
+        });
+        }, 50); // 50ms delay to allow checkbox to render
     }
 });
 
@@ -446,7 +698,7 @@ $("#adv_effective_user_select").click(function (event) {
     open_user_select("adv_effective_current_user"); // Update element with id=adv_effective_current_user once user is selected.
 });
 
-// listen for changes to inheritance checkbox:
+// listen for changes to inheritance checkbox in advanced dialog:
 $('#adv_perm_inheritance').change(function () {
     let filepath = $('#advdialog').attr('filepath');
     let file_obj = path_to_file[filepath];
@@ -458,16 +710,19 @@ $('#adv_perm_inheritance').change(function () {
         // 🔔 notify icon refresher
         $(document).trigger('permissionsChanged');
 
+        // Sync with main dialog checkbox
+        $('#perm_inheritance').prop('checked', true);
+
         open_advanced_dialog(filepath); // reload/reopen dialog
         perm_dialog.attr('filepath', filepath); // force reload 'permissions' dialog
     }
     else {
         // has just been turned off - pop up dialog with add/remove/cancel
         $(`<div id="add_remove_cancel" title="Security">
-            Warning: if you proceed, inheritable permissions will no longer propagate to this object.<br/>
-            - Click Add to convert and add inherited parent permissions as explicit permissions on this object<br/>
-            - Click Remove to remove inherited parent permissions from this object<br/>
-            - Click Cancel if you do not want to modify inheritance settings at this time.<br/>
+            Warning: This will stop using permissions from the parent folder.<br/><br/>
+            - Click <strong>Add</strong> to keep the current inherited permissions as permanent permissions on this object<br/>
+            - Click <strong>Remove</strong> to remove all inherited permissions from this object<br/>
+            - Click <strong>Cancel</strong> to keep using parent folder permissions<br/>
         </div>`).dialog({ // TODO: don't create this dialog on the fly
             modal: true,
             width: 400,
@@ -484,6 +739,9 @@ $('#adv_perm_inheritance').change(function () {
 
                         // 🔔 notify icon refresher
                         $(document).trigger('permissionsChanged');
+
+                        // Sync with main dialog checkbox
+                        $('#perm_inheritance').prop('checked', false);
 
                         open_advanced_dialog(filepath); // reload/reopen 'advanced' dialog
                         perm_dialog.attr('filepath', filepath); // force reload 'permissions' dialog
@@ -502,6 +760,9 @@ $('#adv_perm_inheritance').change(function () {
                         // 🔔 notify icon refresher
                         $(document).trigger('permissionsChanged');
 
+                        // Sync with main dialog checkbox
+                        $('#perm_inheritance').prop('checked', false);
+
                         open_advanced_dialog(filepath); // reload/reopen 'advanced' dialog
                         perm_dialog.attr('filepath', filepath); // force reload 'permissions' dialog
                         $(this).dialog("close");
@@ -512,6 +773,7 @@ $('#adv_perm_inheritance').change(function () {
                     id: "adv-inheritance-cancel-button",
                     click: function () {
                         $('#adv_perm_inheritance').prop('checked', true); // undo unchecking
+                        $('#perm_inheritance').prop('checked', true); // also sync main dialog
                         $(this).dialog("close");
                     },
                 },
@@ -520,19 +782,22 @@ $('#adv_perm_inheritance').change(function () {
     }
 });
 
-// listen for changes to "replace..." checkbox:
+// listen for changes to "replace..." checkbox in advanced dialog:
 $('#adv_perm_replace_child_permissions').change(function () {
     if ($('#adv_perm_replace_child_permissions').prop('checked')) {
-        // we only care when it's been checked (nothing happens on uncheck) (this should really not be a checkbox...)
+        // we only care when it's been checked (nothing happens on uncheck)
         let filepath = $('#advdialog').attr('filepath');
         let file_obj = path_to_file[filepath];
-        $(`<div id="replace_perm_dialog" title="Security">
-            This will replace explicitly defined permissions on all descendants of this object with inheritable permissions from ${file_obj.filename}.<br/>
-            Do you wish to continue?
-        </div>`).dialog({
+        
+        // Small delay to allow checkbox visual update before dialog opens
+        setTimeout(function() {
+            $(`<div id="replace_perm_dialog" title="Security">
+                This will apply these permissions to all files and subfolders inside <strong>${file_obj.filename}</strong>, replacing any custom permissions they have.<br/><br/>
+                Do you wish to continue?
+            </div>`).dialog({
             modal: true,
             position: { my: "top", at: "top", of: $('#html-loc') },
-            width: 400,
+            width: 450,
             buttons: {
                 Yes: {
                     text: "Yes",
@@ -545,6 +810,10 @@ $('#adv_perm_replace_child_permissions').change(function () {
                         // 🔔 notify icon refresher
                         $(document).trigger('permissionsChanged');
 
+                        // Keep checkbox checked to indicate action was taken
+                        // Sync with main dialog
+                        $('#perm_replace_child_permissions').prop('checked', true);
+
                         open_advanced_dialog(filepath); // reload/reopen 'advanced' dialog
                         perm_dialog.attr('filepath', filepath); // reload contents of permissions dialog
                         $(this).dialog("close");
@@ -555,11 +824,13 @@ $('#adv_perm_replace_child_permissions').change(function () {
                     id: "adv-replace-no-button",
                     click: function () {
                         $('#adv_perm_replace_child_permissions').prop('checked', false); // undo checking
+                        $('#perm_replace_child_permissions').prop('checked', false); // also sync main dialog
                         $(this).dialog("close");
                     },
                 },
             }
         });
+        }, 50); // 50ms delay to allow checkbox to render
     }
 });
 
